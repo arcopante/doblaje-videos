@@ -1,0 +1,44 @@
+# ============================================================
+# requirements_macos_silicon.txt
+# Python 3.11 recomendado (también funciona con 3.12)
+#
+# Instalación:
+#   python3.11 -m venv ~/.venvs/doblaje
+#   source ~/.venvs/doblaje/bin/activate
+#   pip install -r requirements_macos_silicon.txt
+#
+# Sistema (Homebrew):
+#   brew install ffmpeg
+# ============================================================
+
+# — PyTorch con soporte MPS (Metal Performance Shaders)
+#   El índice estándar de pip ya incluye wheels para Apple Silicon
+torch>=2.2.0
+torchvision>=0.17.0
+torchaudio>=2.2.0
+
+# — Transcripción de audio
+openai-whisper>=20240930
+
+# — Edición de vídeo (v2.x obligatorio — la v1.x tiene API distinta)
+moviepy>=2.0.0,<2.2.0   # 2.2+ introduce torchcodec (sin wheels para macOS)
+
+# — TTS: fork activo de Coqui (el original "TTS" no soporta Python 3.12
+#   y no publica wheels para macOS/ARM64)
+#   Wheels nativos para macOS desde v0.24.2
+coqui-tts>=0.24.2
+
+# — Separación de voces (voz/fondo)
+demucs>=4.0.0
+
+# — Traducción automática
+deep-translator>=1.11.0
+
+# — Manipulación de audio en Python
+pydub>=0.25.1
+
+# — Barra de progreso
+tqdm>=4.66.0
+
+# — Peticiones HTTP (backend Ollama)
+requests>=2.31.0

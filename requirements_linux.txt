@@ -1,0 +1,60 @@
+# ============================================================
+# requirements_linux.txt
+# Python 3.11 o 3.12
+#
+# Instalación:
+#   python3.11 -m venv ~/.venvs/doblaje
+#   source ~/.venvs/doblaje/bin/activate
+#   pip install -r requirements_linux.txt
+#
+# Sistema:
+#   sudo apt install ffmpeg
+#
+# NOTA CUDA: si tienes GPU NVIDIA, instala PyTorch con CUDA antes
+# de ejecutar este fichero:
+#
+#   CUDA 12.1:
+#     pip install torch torchvision torchaudio \
+#         --index-url https://download.pytorch.org/whl/cu121
+#
+#   CUDA 11.8:
+#     pip install torch torchvision torchaudio \
+#         --index-url https://download.pytorch.org/whl/cu118
+#
+#   Sin GPU (solo CPU):
+#     pip install torch torchvision torchaudio
+#
+# Una vez instalado PyTorch, ejecuta este requirements.txt normalmente.
+# ============================================================
+
+# — PyTorch: se instala aparte (ver nota CUDA arriba).
+#   Si no lo instalaste manualmente, pip instalará la versión CPU.
+torch>=2.2.0
+torchvision>=0.17.0
+torchaudio>=2.2.0
+
+# — Transcripción de audio
+openai-whisper>=20240930
+
+# — Edición de vídeo (v2.x obligatorio — la v1.x tiene API distinta)
+moviepy>=2.0.0,<2.2.0   # 2.2+ introduce torchcodec; en macOS sin GPU NVIDIA no funciona
+
+# — TTS: se puede usar el fork (coqui-tts) o el original (TTS).
+#   En Linux con Python <= 3.11, ambos funcionan.
+#   Se usa el fork para tener las mismas dependencias que en macOS.
+coqui-tts>=0.24.2
+
+# — Separación de voces (voz/fondo)
+demucs>=4.0.0
+
+# — Traducción automática
+deep-translator>=1.11.0
+
+# — Manipulación de audio en Python
+pydub>=0.25.1
+
+# — Barra de progreso
+tqdm>=4.66.0
+
+# — Peticiones HTTP (backend Ollama)
+requests>=2.31.0

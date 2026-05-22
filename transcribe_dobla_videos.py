@@ -95,11 +95,17 @@ except ImportError:
     PYDUB_AVAILABLE = False
 
 # ── Coqui TTS ─────────────────────────────────────────────────────────
+# Se usa `except Exception` en lugar de `except ImportError` porque en macOS
+# Apple Silicon el import puede fallar con RuntimeError u otras excepciones
+# al cargar dependencias internas de TTS. CoquiTTS se define siempre (None
+# si falla) para evitar NameError en get_tts_model.
+CoquiTTS = None
 try:
     from TTS.api import TTS as CoquiTTS
     COQUI_AVAILABLE = True
-except ImportError:
-    print("ADVERTENCIA: 'TTS' no instalada. Ejecuta: pip install TTS")
+except Exception as _tts_import_err:
+    print(f"ADVERTENCIA: 'coqui-tts' no disponible ({_tts_import_err}). "
+          "Ejecuta: pip install coqui-tts")
     COQUI_AVAILABLE = False
 
 
@@ -139,6 +145,8 @@ def get_compute_device() -> str:
             logging.info("GPU NVIDIA (CUDA) detectada.")
             return "cuda"
         if torch.backends.mps.is_available():
+            # Whisper soporta MPS desde v20230918. En versiones anteriores o con
+            # modelos grandes puede fallar; en ese caso process_batch captura el error.
             logging.info("Apple Silicon (MPS) detectado.")
             return "mps"
     except ImportError:
@@ -511,6 +519,7 @@ def save_results(video_path: Path, result: dict, target_language: str | None = N
             logging.info(f"    -> Idioma detectado == destino ({target_language}). Sin traduccion.")
         else:
             logging.info(f"    -> Traduciendo a '{target_language}' (fuente: '{detected_lang}')...")
+            backend = os.environ.get("TRANSLATOR_BACKEND", "ollama").lower()
             try:
                 translated_srt = translate_srt(srt_content, target_language, detected_lang)
                 if translated_srt:
@@ -518,7 +527,9 @@ def save_results(video_path: Path, result: dict, target_language: str | None = N
                         .write_text(translated_srt, encoding="utf-8")
                     logging.info(f"    -> {video_path.stem}_{target_language}.srt guardado")
             finally:
-                subprocess.run(["ollama", "stop", OLLAMA_MODEL], capture_output=True)
+                # Solo detener Ollama si se usó ese backend
+                if backend == "ollama":
+                    subprocess.run(["ollama", "stop", OLLAMA_MODEL], capture_output=True)
 
     return True
 
@@ -530,19 +541,40 @@ def save_results(video_path: Path, result: dict, target_language: str | None = N
 def get_tts_model(model_name: str = "tts_models/multilingual/multi-dataset/xtts_v2"):
     global TTS_MODEL, _TTS_MODEL_NAME_LOADED
 
+    if not COQUI_AVAILABLE or CoquiTTS is None:
+        raise RuntimeError(
+            "Coqui TTS no está disponible. Instala el fork activo: pip install coqui-tts\n"
+            "Si ya lo instalaste, revisa el ADVERTENCIA al inicio del log para ver "
+            "qué excepción impidió cargarlo."
+        )
+
     if TTS_MODEL is None or _TTS_MODEL_NAME_LOADED != model_name:
         logging.info(f"    -> Cargando modelo Coqui TTS: {model_name}")
         logging.info("       (primera vez descarga el modelo; las siguientes usan cache local)")
 
         import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        if device == "cuda":
+        if torch.cuda.is_available():
+            device = "cuda"
             logging.info("    -> TTS usando GPU (CUDA)")
+        elif torch.backends.mps.is_available():
+            # Apple Silicon: Coqui TTS tiene soporte parcial de MPS;
+            # se prueba MPS y si el modelo falla se cae a CPU automáticamente.
+            device = "mps"
+            logging.info("    -> TTS usando Apple Silicon (MPS)")
         else:
+            device = "cpu"
             logging.info("    -> TTS usando CPU")
 
         TTS_MODEL = CoquiTTS(model_name)
-        TTS_MODEL.to(device)
+        try:
+            TTS_MODEL.to(device)
+        except Exception as e:
+            if device == "mps":
+                logging.warning(f"    MPS no soportado por este modelo TTS ({e}). Usando CPU.")
+                device = "cpu"
+                TTS_MODEL.to(device)
+            else:
+                raise
         _TTS_MODEL_NAME_LOADED = model_name
         logging.info("    -> TTS cargado")
 
@@ -956,9 +988,9 @@ def dub_video(
             str(output_path),
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
+            preset="fast",          # un solo -preset (quitado el duplicado de ffmpeg_params)
             threads=os.cpu_count(),
-            ffmpeg_params=["-movflags", "+faststart", "-crf", "23", "-preset", "fast"],
+            ffmpeg_params=["-movflags", "+faststart", "-crf", "23"],
             logger=None,
         )
         logging.info(f"    -> Video doblado guardado: {output_path.name}")
@@ -1010,8 +1042,13 @@ def burn_subtitles(video_path: Path, target_language: str) -> bool:
     output_path  = video_path.with_name(
         f"{video_path.stem}_{target_language}_sub{video_path.suffix}"
     )
-    # Escapar la ruta para el filtro de ffmpeg (Windows necesita escapar los dos puntos)
-    srt_escaped = str(srt_path).replace("\\", "/").replace(":", "\\:")
+    # En Windows hay que escapar los dos puntos de la letra de unidad (C:\...).
+    # En macOS/Linux las rutas absolutas empiezan por / y no necesitan ese escape.
+    if sys.platform == "win32":
+        srt_escaped = str(srt_path).replace("\\", "/").replace(":", "\\:")
+    else:
+        # En macOS/Linux solo escapar espacios y caracteres especiales del shell
+        srt_escaped = str(srt_path).replace("'", "\\'").replace(" ", "\\ ")
 
     logging.info(f"\n    ── OPCION B: Subtitulos quemados -> {output_path.name} ──")
 
@@ -1145,7 +1182,15 @@ def process_batch(
     processed = skipped = errors = 0
 
     logging.info("Cargando modelo Whisper...")
-    whisper_model = whisper.load_model(model_name, device=device)
+    try:
+        whisper_model = whisper.load_model(model_name, device=device)
+    except Exception as e:
+        if device == "mps":
+            logging.warning(f"Whisper no pudo cargarse en MPS ({e}). Reintentando en CPU...")
+            device = "cpu"
+            whisper_model = whisper.load_model(model_name, device=device)
+        else:
+            raise
 
     for i, video_path in enumerate(video_files, start=1):
         logging.info(f"\n{'='*50}")
